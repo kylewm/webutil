@@ -210,11 +210,51 @@ def extract_links(text):
 # https://github.com/silas/huck/blob/master/huck/utils.py#L59 , but i kept
 # finding new input strings that would make it hang the regexp engine.
 _LINKIFY_RE = re.compile(r"""
-  \b(?<!=[\'"])                     # ignore html attribute values
-  (\w{3,9}:/{1,3}|www\.)            # scheme or leading www.
-  [\w\-_.]+(:\d{2,6})?              # host and optional port
-  ([/?][\w/.\-_~.;:%?@$#&()=+]*)?   # path and query
+  \b(?:[a-z]{3,9}:/{1,3})?                   # optional scheme
+  (?:[a-z0-9\-]+\.)+[a-z]{2,4}(?::\d{2,6})?  # host and optional port
+  (?:(?:/[\w/.\-_~.;:%?@$#&()=+]*)|\b)       # path and query
   """, re.VERBOSE | re.UNICODE)
+
+
+def tokenize_links(text):
+  """Split text into link and non-link text, returning two lists
+  roughly equivalent to the output of re.findall and re.split (with
+  some post-processing)
+  """
+  links = _LINKIFY_RE.findall(text)
+  splits = _LINKIFY_RE.split(text)
+
+  for ii in xrange(len(links)):
+    link = links[ii]
+
+    # avoid double linking by looking at preceeding 2 chars
+    if (splits[ii].strip().endswith('="')
+            or splits[ii].strip().endswith("='")
+            or splits[ii + 1].strip().startswith('</a')):
+      # collapse link into before text
+      splits[ii] = splits[ii] + link
+      links[ii] = None
+      continue
+
+    # trim trailing punctuation from links
+    jj = len(link) - 1
+    while (jj >= 0 and link[jj] in '.!?,;:)'
+           # allow 1 () pair
+           and (link[jj] != ')' or '(' not in link)):
+      jj -= 1
+      links[ii] = link[:jj + 1]
+      splits[ii + 1] = link[jj + 1:] + splits[ii + 1]
+
+  # clean up the output by collapsing removed links
+  ii = len(links) - 1
+  while ii >= 0:
+    if links[ii] is None:
+      splits[ii] = splits[ii] + splits[ii + 1]
+      del links[ii]
+      del splits[ii + 1]
+    ii -= 1
+
+  return links, splits
 
 
 def linkify(text, pretty=False, **kwargs):
@@ -232,26 +272,23 @@ def linkify(text, pretty=False, **kwargs):
 
   Returns: string, linkified input
   """
-  def split_trailing_punc(text):
-    # split trailing punctuation off the end of a url
-    ii = len(text) - 1
-    while (ii >= 0 and text[ii] in '.!?,;:)'
-           # allow 1 () pair
-           and (text[ii] != ')' or '(' not in text)):
-        ii -= 1
-    return text[:ii + 1], text[ii + 1:]
 
-  def make_link(m):
-    head, tail = split_trailing_punc(m.group(0))
-    url = href = head
-    if href.startswith('www.'):
+  links, splits = tokenize_links(text)
+  result = []
+
+  for ii in xrange(len(links)):
+    result.append(splits[ii])
+
+    url = href = links[ii]
+    if not href.startswith('http://') and not href.startswith('https://'):
       href = 'http://' + href
-    if pretty:
-      return pretty_link(href, **kwargs) + tail
-    else:
-      return u'<a href="%s">%s</a>%s' % (href, url, tail)
 
-  return _LINKIFY_RE.sub(make_link, text)
+    if pretty:
+      result.append(pretty_link(href, **kwargs))
+    else:
+      result.append(u'<a href="%s">%s</a>' % (href, url))
+  result.append(splits[-1])
+  return ''.join(result)
 
 
 def pretty_link(url, text=None, keep_host=True, glyphicon=None, a_class=None,
