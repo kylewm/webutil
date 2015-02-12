@@ -216,27 +216,25 @@ _LINKIFY_RE = re.compile(r"""
   """, re.VERBOSE | re.UNICODE)
 
 
-def tokenize_links(text):
+def tokenize_links(text, skip_bare_cc_tlds=False):
   """Split text into link and non-link text, returning two lists
   roughly equivalent to the output of re.findall and re.split (with
   some post-processing)
+
+  Args:
+    text: string to linkify
+    skip_bare_cc_tlds: boolean, whether to skip links of the form
+      [domain].[2-letter TLD] with no schema and no path
+
+  Returns: a tuple containing two lists of strings, a list of links
+  and list of non-link text
   """
   links = _LINKIFY_RE.findall(text)
   splits = _LINKIFY_RE.split(text)
 
   for ii in xrange(len(links)):
-    link = links[ii]
-
-    # avoid double linking by looking at preceeding 2 chars
-    if (splits[ii].strip().endswith('="')
-            or splits[ii].strip().endswith("='")
-            or splits[ii + 1].strip().startswith('</a')):
-      # collapse link into before text
-      splits[ii] = splits[ii] + link
-      links[ii] = None
-      continue
-
     # trim trailing punctuation from links
+    link = links[ii]
     jj = len(link) - 1
     while (jj >= 0 and link[jj] in '.!?,;:)'
            # allow 1 () pair
@@ -244,6 +242,19 @@ def tokenize_links(text):
       jj -= 1
       links[ii] = link[:jj + 1]
       splits[ii + 1] = link[jj + 1:] + splits[ii + 1]
+
+    link = links[ii]
+
+    # avoid double linking by looking at preceeding 2 chars
+    if (splits[ii].strip().endswith('="')
+        or splits[ii].strip().endswith("='")
+        or splits[ii + 1].strip().startswith('</a')
+        # skip domains with 2-letter TLDs and no schema or path
+        or (skip_bare_cc_tlds and re.match('[a-z0-9\-]+\.[a-z]{2}$', link))):
+      # collapse link into before text
+      splits[ii] = splits[ii] + links[ii]
+      links[ii] = None
+      continue
 
   # clean up the output by collapsing removed links
   ii = len(links) - 1
@@ -257,7 +268,7 @@ def tokenize_links(text):
   return links, splits
 
 
-def linkify(text, pretty=False, **kwargs):
+def linkify(text, pretty=False, skip_bare_cc_tlds=False, **kwargs):
   """Adds HTML links to URLs in the given plain text.
 
   For example: linkify("Hello http://tornadoweb.org!") would return
@@ -273,7 +284,7 @@ def linkify(text, pretty=False, **kwargs):
   Returns: string, linkified input
   """
 
-  links, splits = tokenize_links(text)
+  links, splits = tokenize_links(text, skip_bare_cc_tlds)
   result = []
 
   for ii in xrange(len(links)):
